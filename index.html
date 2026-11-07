@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ClubFlow｜社團全自動工作流</title>
+    <meta
+      name="description"
+      content="ClubFlow turns one university club event brief into ready-to-copy Instagram, Stories, LINE, Linktree, form, email, school-document, and certificate previews. Nothing is published."
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <dialog id="lightbox" aria-label="Preview">
+      <button type="button" class="light-close" data-action="close-light" id="lightbox-close">×</button>
+      <img id="lightbox-img" alt="" />
+    </dialog>
+    <script type="module" src="/src/main.ts"></script>
+    <noscript>ClubFlow needs JavaScript to generate previews in this browser.</noscript>
+  </body>
+</html>
