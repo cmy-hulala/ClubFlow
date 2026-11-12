@@ -1,6 +1,6 @@
 export type Lang = "zh" | "en";
 
-export type View = "home" | "brief" | "market" | "outputs";
+export type View = "desk" | "home" | "brief" | "market" | "outputs";
 
 export type ModuleId =
   | "ig-post"

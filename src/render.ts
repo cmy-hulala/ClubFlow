@@ -3,7 +3,8 @@ import { copyBin, fileBin, resetBins } from "./bins";
 import { esc, fieldLabel, missingFields, ntd, whenLine } from "./format";
 import { moduleCopy, t, tf, type MsgKey } from "./i18n";
 import { state } from "./state";
-import type { Block, Brief, ModuleId, Paper, TimelineItem } from "./types";
+import type { Block, Brief, ModuleId, Paper, TimelineItem, View } from "./types";
+import { mountDesk } from "./desk";
 
 let seq = 0;
 
@@ -228,7 +229,7 @@ function blockHtml(block: Block): string {
   </section>`;
 }
 
-function navButton(view: "home" | "brief" | "market" | "outputs", key: MsgKey): string {
+function navButton(view: View, key: MsgKey): string {
   const current = state.view === view;
   return `<button type="button" class="nav-btn ${current ? "active" : ""}" data-action="nav" data-view="${view}" ${current ? 'aria-current="page"' : ""}>${esc(t(state.lang, key))}</button>`;
 }
@@ -250,6 +251,7 @@ function shell(): string {
         <p class="lock">${esc(t(lang, "noPassword"))}</p>
       </section>
       <nav class="nav" aria-label="ClubFlow">
+        ${navButton("desk", "navDesk")}
         ${navButton("home", "navHome")}
         ${navButton("brief", "navBrief")}
         ${navButton("market", "navMarket")}
@@ -277,12 +279,13 @@ function shell(): string {
           </div>
         </div>
       </header>
-      <div class="content">${viewHtml()}</div>
+      <div class="content${state.view === "desk" ? " content-desk" : ""}">${viewHtml()}</div>
     </div>
   </div>`;
 }
 
 function viewHtml(): string {
+  if (state.view === "desk") return `<div id="desk"></div>`;
   if (state.view === "brief") return briefHtml();
   if (state.view === "market") return marketHtml();
   if (state.view === "outputs") return outputsHtml();
@@ -320,6 +323,11 @@ function homeHtml(): string {
       </div>
       ${week}
     </div>
+    <section class="panel">
+      <h2>${esc(t(lang, "homeMoneyTitle"))}</h2>
+      <p>${esc(t(lang, "homeMoneyBody"))}</p>
+      <button type="button" class="btn" data-action="nav" data-view="desk">${esc(t(lang, "homeMoneyCta"))}</button>
+    </section>
     <div class="stats">
       <article><b>${esc(t(lang, "statChannels"))}</b><span>${esc(t(lang, "statChannelsSub"))}</span></article>
       <article><b>${esc(t(lang, "statBrief"))}</b><span>${esc(t(lang, "statBriefSub"))}</span></article>
@@ -562,6 +570,7 @@ export function render(options?: { keepScroll?: boolean }): void {
     const next = document.querySelector(".main");
     if (next) next.scrollTop = y;
   }
+  if (state.view === "desk") mountDesk();
 }
 
 export function missingSummary(): string {

@@ -195,7 +195,7 @@ function isModuleId(value: string): value is ModuleId {
 }
 
 function isView(value: string): value is View {
-  return value === "home" || value === "brief" || value === "market" || value === "outputs";
+  return value === "desk" || value === "home" || value === "brief" || value === "market" || value === "outputs";
 }
 
 document.body.addEventListener("click", (event) => {
@@ -291,6 +291,8 @@ document.body.addEventListener("submit", (event) => {
 
 document.body.addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    const target = event.target;
+    if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) return;
     event.preventDefault();
     void runWorkflow();
   }

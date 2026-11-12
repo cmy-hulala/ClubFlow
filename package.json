@@ -2,23 +2,33 @@
   "name": "clubflow",
   "version": "1.0.0",
   "private": true,
-  "description": "ClubFlow — one university-club event brief in, ready-to-copy channel previews out. Generate only. Nothing is published.",
+  "description": "ClubFlow — an AI officer copilot for student clubs. One event brief becomes channel copy, and PayPal sandbox runs registration, invoices, donations, payouts, dues, refunds, and reconciliation.",
   "type": "module",
   "scripts": {
-    "start": "vite --host 0.0.0.0 --port 43123",
-    "dev": "vite --host 0.0.0.0 --port 43123",
-    "build": "tsc --noEmit && vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 43123",
-    "typecheck": "tsc --noEmit"
+    "dev": "concurrently -k -n server,web -c blue,green \"tsx watch --ignore data --ignore dist --ignore dist-server server/index.ts\" \"vite --host 0.0.0.0 --port 43123\"",
+    "start": "NODE_ENV=production node dist-server/index.js",
+    "build": "tsc --noEmit && tsc -p tsconfig.server.json && vite build",
+    "preview": "npm start",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "check:mock": "tsx server/selfcheck.ts"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
     "@fontsource/noto-sans-tc": "^5.2.8",
-    "@fontsource/outfit": "^5.2.8"
+    "@fontsource/outfit": "^5.2.8",
+    "@paypal/agent-toolkit": "^1.11.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "nodemailer": "^6.9.16"
   },
   "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.13.10",
+    "@types/nodemailer": "^6.4.17",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.3",
     "typescript": "^5.6.3",
     "vite": "^6.0.11"
   }

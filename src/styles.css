@@ -367,13 +367,82 @@ dialog img { max-width: 92vw; max-height: 88vh; border-radius: 12px; display: bl
   .rail { position: relative; height: auto; min-height: 0; }
   .main { height: auto; overflow: visible; }
   .officers, .rail-foot { display: none; }
-  .nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .nav { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); }
   .nav-btn { text-align: center; padding: 8px 4px; font-size: 14px; }
   .hero, .split, .view-head, .market-layout, .stats, .form-grid { grid-template-columns: 1fr; }
   .mod-grid { grid-template-columns: 1fr; }
   .quote { position: static; }
   .timeline li, .kv-row { grid-template-columns: 1fr; }
   .topbar-inner, .content { width: min(1120px, calc(100% - 28px)); }
+  .desk-grid { grid-template-columns: minmax(0, 1fr); }
+  .desk-col { max-height: none; }
+  .content, .content-desk, .main, .app { min-width: 0; }
+}
+
+.content-desk { width: min(1480px, calc(100% - 28px)); }
+.desk-banner {
+  border-radius: 16px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  background: var(--gold-soft);
+  border: 1px solid #ead7a8;
+}
+.desk-banner.sandbox { background: #e5f6ef; border-color: #b7e0d2; }
+.desk-banner.setup { background: #fde8e2; border-color: #f0c2b6; }
+.desk-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr) minmax(0, 0.95fr);
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+}
+.desk-col {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 14px;
+  max-height: calc(100vh - 132px);
+  overflow: auto;
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+.desk-head, .chat-form, .btn-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.desk-head { justify-content: space-between; margin-bottom: 8px; }
+.desk-card, .confirm-card {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+.desk-card h3, .desk-col h2, .desk-col h3 { margin-bottom: 8px; }
+.desk-card label { display: grid; gap: 4px; font-size: 13px; margin: 8px 0; }
+.desk-card input, .chat-form textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fff;
+}
+.table-wrap { overflow: auto; }
+.st-paid, .st-donated { background: #e5f6ef; color: var(--jade-ink); }
+.st-unpaid { background: var(--gold-soft); color: #7a5a16; }
+.st-refunded { background: #fde8e2; color: var(--coral); }
+.prompts { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.transcript { display: flex; flex-direction: column; gap: 8px; min-height: 120px; max-height: 320px; overflow: auto; margin-bottom: 8px; }
+.bubble { border-radius: 14px; padding: 10px 12px; background: #f6f1e7; white-space: pre-wrap; }
+.bubble.user { background: #e7f3ee; }
+.bubble p { margin: 0; }
+.chat-form { align-items: stretch; }
+.chat-form textarea { min-height: 72px; resize: vertical; }
+.paypal-slot, #pp-donation { min-height: 36px; margin-top: 8px; }
+.desk-copy .prose { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.desk-copy .shot { width: min(220px, 100%); }
+.desk-copy .shot img { width: 100%; height: auto; }
+
+@media (max-width: 980px) {
+  .desk-grid { grid-template-columns: minmax(0, 1fr); }
+  .desk-col { max-height: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
