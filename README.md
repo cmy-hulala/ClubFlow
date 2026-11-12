@@ -1,127 +1,235 @@
-# ClubFlow｜社團全自動工作流
+# ClubFlow
 
-**Traditional Chinese summary.** 陽明交大創創社的幹部現在要把同一場活動改寫 7 次以上：Instagram 貼文、限時動態、Linktree、LINE、Google 表單、Gmail，再加上學校的活動申請、場地、預算、報銷。ClubFlow 只維護一份活動簡表，產出每個管道的預覽。它不發布、不寄信、不登入學校。限動的字直接畫在圖上，因為 Meta 的限動 API 沒有說明欄。
+ClubFlow is an officer copilot for a student club. One event brief still becomes ready-to-copy Instagram, Story, LINE, and email previews. PayPal now runs the money for that same event: registration, sponsor invoices, donations, speaker payouts, monthly dues, refunds, and the reimbursement report.
 
-ClubFlow is a local demo for university club officers, especially the president and the activity lead. One event brief becomes ready-to-copy channel previews: an Instagram caption and feed card, an Instagram Story with the words burned into the image, a Linktree update, a LINE Official Account broadcast, a Google Form field list, a Gmail draft, school paperwork, certificates, reminders, and a post-event thank-you with survey questions.
+The demo club is the fictional **NYCU Entrepreneurship & Innovation Club**. People, inboxes, and `example.com` links are not real. Do not email the sample addresses.
 
-Nothing is published. There is no school login and no API key.
+Currency in the money desk is **USD**. PayPal calls go to the **sandbox** only. The app refuses `PAYPAL_ENV=live`.
 
-## The problem
+## What you can do
 
-A campus workshop is one set of facts: title, speaker, time, room, capacity, deadline. Officers still retype those facts into seven or more places, in slightly different shapes, usually the night before the filing deadline. The copy drifts. The venue request does not match the Instagram post. The reimbursement checklist is a blank doc someone has to invent again next semester.
+Open the **Money desk**. Three columns:
 
-ClubFlow keeps a single brief as the source. Officers mix the channels they need, run the workflow, and copy the previews. A human still posts, and a human still files the school forms.
+- **Left.** The seeded workshop (title, time, room, fees) and generated channel copy. Copy is still a local template. Nothing is posted to Instagram, LINE, or Gmail.
+- **Middle.** The attendee roster with payment status, PayPal Checkout, invoices, donations, payouts, dues, and the reimbursement report.
+- **Right.** An officer agent. With `OPENAI_API_KEY` it calls a model and the official PayPal agent toolkit. Without a key it uses a built-in intent parser so the demo still runs. Refunds, payouts, and sending an invoice wait for a **Confirm** button.
 
-## Features
+The older brief, marketplace, and output gallery are still in the sidebar.
 
-- Sample workspace for **陽明交大創創社 / NYCU Entrepreneurship & Innovation Club**, with fictional officers and a fictional speaker. Do not email the sample address.
-- **Load sample event** fills a realistic funding workshop. Every field stays editable.
-- **Traditional Chinese by default**, with an EN toggle for judges. Loading the sample again (or switching language while the sample is untouched) swaps the brief into that language and regenerates.
-- **Module marketplace.** One-day onboarding (sample price NT$6,800) includes Instagram post, Instagram Stories, LINE, Google Form, Gmail, and reminders. Add-ons are priced per event: Linktree, school documents, certificates, thank-you and survey. Coming-soon cards (check-in, president approval, handover, short links) do not generate. Modules combine; presets cover “social only” and “admin only.” The quote is a sample. There is no checkout.
-- **Run workflow** builds every enabled module from the brief.
-- **Output gallery** with copy and image download. Each card says the preview was not published.
+## Architecture
 
-### What each core module generates
+```text
+Browser (Vite + TypeScript)
+  money desk, channel copy, PayPal JS SDK buttons
+        |  /api
+Express (server/)
+  roster + ledger JSON file
+  PayPal REST (sandbox) or MOCK_PAYPAL
+  email via Resend, SMTP, or the in-app outbox
+  officer agent
+        |
+PayPal sandbox  ·  optional OpenAI-compatible chat API
+```
+
+`npm run dev` starts the API on port **8787** and the Vite app on port **43123**. Vite proxies `/api` to the API. `npm start` (after `npm run build`) serves the built UI and the API from one process, which is what Render runs.
+
+The ledger is `data/store.json` (or `CLUBFLOW_STORE`). It is gitignored. On Vercel the file is under the temp directory because the serverless disk is read-only. A fresh instance reseeds the demo.
+
+## PayPal APIs and the model
+
+| Desk action | PayPal surface | Confirm in the UI |
+| --- | --- | --- |
+| Registration fee | Orders v2 create + capture, PayPal JavaScript SDK buttons | Buyer approves in PayPal |
+| Mark paid if the capture arrives later | Webhooks (`PAYMENT.CAPTURE.COMPLETED`, refunds, order approved, subscription activated). Signature check when `PAYPAL_WEBHOOK_ID` is set | No |
+| Sponsor invoice | Invoicing v2 create, then send | Send only |
+| Donation | Orders v2. On capture: thank-you email + PDF certificate | Buyer approves in PayPal |
+| Speaker fee | Payouts API (`POST /v1/payments/payouts`) | Yes |
+| Monthly dues | Catalog products, Billing plans, Subscriptions. Sandbox returns an approve link | Member approves in PayPal |
+| Refund | Payments v2 capture refund. Roster status becomes `refunded` | Yes |
+| Reimbursement report | Transaction Search (`/v1/reporting/transactions`) plus the local capture/webhook ledger | No |
+
+The agent uses `@paypal/agent-toolkit/openai` (orders, invoices, products, subscription plans, subscriptions, refunds, transaction list). That package does not cover payouts or webhooks, so those are ClubFlow tools (`propose_payout`, `club_webhook_status`). Toolkit calls that would send an invoice, refund a capture, or capture an order are held until the officer confirms. The same tool list is what the PayPal MCP server exposes; this app drives it through the toolkit’s OpenAI adapter rather than a second MCP process.
+
+The model is any OpenAI-compatible chat API:
+
+- `OPENAI_API_KEY` (optional)
+- `OPENAI_MODEL` (default `gpt-4o-mini`)
+- `OPENAI_BASE_URL` (default `https://api.openai.com/v1`)
+
+No key: the intent parser handles the scripted officer phrases and still opens the confirm card before money moves.
+
+Email uses `RESEND_API_KEY` or SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`). If neither is set, the message is stored in the on-screen outbox. A failed provider does not roll back a captured payment; the outbox still has the copy and any provider error.
+
+## Channel copy (unchanged product)
+
+One brief still feeds the local generator:
 
 | Module | Output |
 | --- | --- |
-| Instagram post | Caption, hashtags, and a 1080×1350 feed card |
-| Instagram Stories | 1080×1920 image with title, speaker, time, and place drawn into the pixels. No poll, question, countdown, or link sticker |
-| Linktree | Ordered titles and URLs, plus JSON. Linktree is not called |
-| LINE Official Account | Broadcast draft in the shape of a Taiwan OA message. It is not sent |
-| Google signup form | Title, description, confirmation line, and fields (name, department, year, email, dietary needs, and a few others) |
-| Gmail | Subject, HTML preview, and plain text. No recipient list is imported |
-| School admin docs | Filled drafts for 活動申請, 場地借用, 預算, and 報銷, plus a deadline strip. Amounts are labeled as samples |
-| Certificates | Speaker certificate and a blank-name attendee certificate, both downloadable |
-| Reminders | Three days before, and the morning of the event |
-| Post-event | Thank-you, a short LINE version, and six survey questions |
+| Instagram post | Caption, hashtags, feed card |
+| Instagram Stories | 1080×1920 image with the words drawn on it. No poll, question, countdown, or link sticker. The Graph API has no Story caption field |
+| LINE Official Account | Broadcast draft. Not sent |
+| Google signup form | Field list |
+| Gmail | Subject and HTML preview. Not sent |
+| Linktree | Titles, URLs, JSON. Linktree is not called |
+| School documents | Drafts only. No school login |
+| Certificates, reminders, thank-you | Previews |
+
+The marketplace prices in NT$ are still a sample quote. They are not the PayPal checkout. Event money is the USD desk.
 
 ## Setup
 
-Requires Node.js 18 or newer. No API keys.
+Node.js 18 or newer.
 
 ```bash
 npm install
-npm start
+cp .env.example .env
+npm run dev
 ```
 
-Open [http://127.0.0.1:43123](http://127.0.0.1:43123).
+Open [http://127.0.0.1:43123/#/desk](http://127.0.0.1:43123/#/desk).
 
-`npm start` runs the Vite dev server on port **43123**. For a static build:
+Leave PayPal variables empty for a first look. The banner explains that the desk is simulating PayPal. Set `MOCK_PAYPAL=1` if you want that simulation even after you add keys. Set `MOCK_PAYPAL=0` with empty keys if you want the buttons turned off until credentials exist.
+
+Production, one process:
 
 ```bash
 npm run build
-npm run preview
+npm start
 ```
 
-The preview server uses the same port. Generation runs in the browser after install, so the demo does not call a model or a social network.
+`npm start` listens on `PORT` (default 8787) and serves `dist/` plus `/api`.
 
-## Demo walkthrough (about 2–3 minutes)
+`npm run check:mock` runs the money flows against the in-memory mock (no PayPal network).
 
-Record at a 1280px-wide desktop window. Start from a fresh load (or press **清空示範 / Reset demo** in the sidebar).
+## Create a sandbox app and a sandbox buyer
 
-1. **Home (15s).** Point at the sidebar: this is the 創創社 workspace, and it does not ask for a school password. Read the line that officers currently rewrite one event **7+** times. Mention the sample price: one-day onboarding plus a module marketplace, paid by a club budget or a student-affairs grant, not the president’s pocket.
-2. **Language (10s).** Click **EN**, then **中文**. Judges can stay in English from here if they prefer; the steps below assume Chinese, and the same clicks exist in English.
-3. **Load the sample (20s).** Press **載入範例活動**. Scroll the brief: speaker 林可恩, 21 Nov 2026, 14:00–16:30, 工程三館 EC 201, 80 seats, signup closes 18 Nov 23:59. Say the speaker, inbox, and URLs are fictional.
-4. **Marketplace (30s).** Open **模組市集**. Show the six modules marked **導入包含** and the quote (NT$6,800 once, plus per-event add-ons). Turn **學校行政文件** off and on so the quote changes. Point at **即將推出** (check-in, approval, handover, short links) — those cards do not generate. Turn every generatable module back on (**全選可產出**) before the next step.
-5. **Run (60–70s).** Press **執行工作流**. On the gallery:
-   - Instagram caption: press **複製**.
-   - Stories: the vertical image has the words drawn on it. Read the warning: the Meta Graph API has no Story caption field and cannot place poll, question, countdown, or link stickers. Press **放大** if the thumbnail is small.
-   - Linktree JSON, the LINE bubble, the form field table, and the Gmail preview.
-   - School documents: the timeline, then 活動申請 / 場地 / 預算 / 報銷. If you record on 7 Nov 2026, the activity application says the suggested filing day is today. Officers submit these themselves. There is no school login.
-   - Both certificates, the two reminders, and the thank-you plus survey.
-6. **Close (10s).** Rest on the green banner: nothing was sent to Instagram, LINE, Gmail, Google, or the school.
+1. Sign in at [https://developer.paypal.com/dashboard/](https://developer.paypal.com/dashboard/).
+2. Switch to **Sandbox**. Open **Apps & Credentials** and create a REST app (or open the default sandbox app).
+3. Copy the **Client ID** and **Secret** into `.env` as `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`.
+4. Under **Sandbox → Accounts**, copy the **business** account email into `PAYPAL_MERCHANT_EMAIL`. This variable is required for Invoicing. There is no default. PayPal rejects an invoice whose invoicer email is not that sandbox business account. If it is missing, invoice create returns a setup error instead of calling PayPal.
+5. Create or open a **US sandbox personal** account under **Dashboard → Sandbox → Accounts**. Use that account as the checkout buyer and as the invoice recipient. A live PayPal login cannot approve a sandbox order. A Taiwan sandbox merchant invoicing a Taiwan sandbox payer returns `406 TAIWAN_MERCHANT_TAIWAN_PAYER_RESTRICTED`; use a non-Taiwan recipient. The seeded sponsor Lane Lab (`lane.lab@example.com`) is the default and is a working recipient. Put the US personal email in `PAYPAL_SPEAKER_EMAIL` so the speaker payout can reach `SUCCESS`. If the address is not a sandbox account, the payout batch can still say `SUCCESS` while the item stays `UNCLAIMED` with `RECEIVER_UNREGISTERED`. The roster stays unpaid until the item status is `SUCCESS`. Press **Refresh payout status** after you fix the email.
+6. On the sandbox REST app, enable the **Invoicing** and **Transaction search** checkboxes if those calls return `403 NOT_AUTHORIZED`. The desk says so in the error. The reimbursement report still builds from the local capture and webhook ledger when Transaction Search is unauthorized or empty.
+7. Leave `MOCK_PAYPAL` unset so the server uses the sandbox. Restart `npm run dev`. The banner should say the sandbox is connected.
+8. Optional webhook: in the app, add `https://<your-host>/api/paypal/webhook` for `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.REFUNDED`, `CHECKOUT.ORDER.APPROVED`, and `BILLING.SUBSCRIPTION.ACTIVATED`. Put the webhook id in `PAYPAL_WEBHOOK_ID`. Without that id, events are applied and marked unverified so a local demo still updates the roster. Do that only on a sandbox host.
 
-If the sample event date is already in the past when you record, the deadline chips will say so. That is the same logic an officer would see. Change the date on the brief and run again to show it move.
+`POST /api/checkout/orders` returns `approveUrl`, PayPal’s `rel: "approve"` link. The order pattern is:
 
-## Submission media
+`https://www.sandbox.paypal.com/checkoutnow?token=<ORDER_ID>`
 
-Captured from the running app in Chrome at 1280px wide. These are not mockups.
+Open that URL in a browser logged in as the sandbox personal buyer, approve, then press **Capture approved payment**. The same link is on the roster as **Open PayPal approval** when the JavaScript SDK button is missing. Subscription approval uses the `approveUrl` on the subscription response, typically:
 
-Screenshots:
+`https://www.sandbox.paypal.com/webapps/billing/subscriptions?ba_token=<BA-...>`
 
-- [docs/screenshots/01-home.png](docs/screenshots/01-home.png) — home, 陽明交大創創社 in the sidebar, the 7+ rewrite line, no school password
-- [docs/screenshots/02-event-brief.png](docs/screenshots/02-event-brief.png) — sample event loaded (林可恩, 21 Nov 2026, 工程三館 EC 201)
-- [docs/screenshots/03-marketplace.png](docs/screenshots/03-marketplace.png) — included modules and per-event add-on prices
-- [docs/screenshots/04-outputs.png](docs/screenshots/04-outputs.png) — gallery after Run workflow
-- [docs/screenshots/05-stories.png](docs/screenshots/05-stories.png) — Stories card with text burned in, plus the Meta Graph API note
-- [docs/screenshots/06-school-docs.png](docs/screenshots/06-school-docs.png) — activity, venue, budget, and reimbursement drafts, and the reminder that a person still submits them
+The same sandbox personal account approves that link.
 
-Demo video: [docs/demo.mp4](docs/demo.mp4). Live screen recording, 1280×800, 2 minutes 17 seconds. English captions sit on the walkthrough: home, switch to English and stay there, load the sample, toggle one add-on so the quote changes, select every module that generates, run, copy a caption, Stories and the Meta limitation, then Linktree, LINE, the form, Gmail, school docs, certificates, reminders, and the thank-you. It ends on the banner that nothing was sent.
+Transaction Search can also lag for hours after a successful capture. An empty result still leaves the local ledger in the CSV.
 
-## Tech stack
+Seeded rows named Mia, Priya, and Sofia are history, not sandbox captures. In sandbox mode, refund those only after a new sandbox payment. Mock mode refunds them so the confirm flow is visible without keys.
 
-- [Vite](https://vitejs.dev/) 6 and TypeScript. No server-side runtime beyond the static dev server.
-- One page, no framework. UI strings live in `src/i18n.ts`.
-- Canvas draws the Story, the feed card, and the certificates in the browser (`src/cards.ts`).
-- Copy is a built-in bilingual template (`src/generate.ts`), not a live model, so the demo cannot fail for a missing key.
-- Fonts: Outfit and Noto Sans TC (Traditional Chinese), bundled via Fontsource so the UI does not depend on Google Fonts at runtime.
-- State for the brief and the module mix is stored in `localStorage` on this machine only.
+## Judge test (about 5 minutes)
+
+No PayPal account required for this path. Do not put secrets in the repo.
+
+```bash
+npm install
+npm run dev
+```
+
+1. Open [http://127.0.0.1:43123/#/desk](http://127.0.0.1:43123/#/desk). Read the banner. It should say credentials are missing and the desk is simulating PayPal.
+2. **Left.** Press **Generate channel copy**. Copy an Instagram caption. Open **Full output gallery** if you want the older modules, then come back to **Money desk**.
+3. **Middle.** On Jonah Wu, press **Pay 12.00 USD**. His status becomes paid. Open **Outbox** on the right and read the receipt.
+4. Press **Refund** on Mia Chen, then **Confirm**. The roster shows refunded.
+5. **Sponsor invoice.** Create draft, then **Send invoice**, then **Confirm**. Lane Lab’s copy is in the outbox.
+6. **Sponsor donation.** Pay 25.00 USD (the form is filled). Open the certificate link and the thank-you in the outbox.
+7. **Pay speaker fee** on Ken Lin, then **Confirm**.
+8. **Publish plan to PayPal**, then **Start subscription**. In mock mode the member becomes active immediately. In the sandbox, open the subscription `approveUrl` while logged in as a sandbox personal buyer from **Dashboard → Sandbox → Accounts**. That link looks like `https://www.sandbox.paypal.com/webapps/billing/subscriptions?ba_token=BA-...`.
+9. **Build report**, then **Download CSV**. The notice explains the local ledger fallback. If Transaction Search returns `403 NOT_AUTHORIZED`, enable the **Transaction search** checkbox on the sandbox app. The CSV still contains the local ledger.
+10. **Right.** Ask `Who has not paid?` Confirm a refund the agent proposes (`Refund Priya Shah`) and watch the roster change. Ask `Build the reimbursement report`.
+11. Press **Simulate capture webhook** to mark the next unpaid attendee paid through `POST /api/paypal/webhook`.
+
+With sandbox keys, checkout does not require the JavaScript SDK. `POST /api/checkout/orders` returns `approveUrl` (`https://www.sandbox.paypal.com/checkoutnow?token=<ORDER_ID>`), and the roster shows **Open PayPal approval**. Log in as a **US sandbox personal** account from **Dashboard → Sandbox → Accounts**, approve, then press **Capture approved payment**. A live PayPal account cannot approve that URL. Use that same US personal account for invoice recipients. A Taiwan sandbox payer billed by a Taiwan sandbox merchant returns `406 TAIWAN_MERCHANT_TAIWAN_PAYER_RESTRICTED`; leave the sponsor as Lane Lab (`lane.lab@example.com`) unless you replace it with another non-Taiwan sandbox account. Capture and refund both wait on buyer approval. Invoicing needs `PAYPAL_MERCHANT_EMAIL` and the app’s **Invoicing** checkbox. Payout item status can be `UNCLAIMED` or `FAILED` even when the batch says `SUCCESS`; the roster and the agent stay unpaid until the item is `SUCCESS`.
+
+Reset the seeded roster with **Reset money demo**.
+
+## Deploy
+
+### Render (recommended)
+
+`render.yaml` is a Node web service.
+
+- Build: `npm install && npm run build`
+- Start: `npm start`
+- Set `PUBLIC_BASE_URL` to the Render URL (no trailing slash).
+- Set the PayPal and optional OpenAI / email variables in the dashboard. Do not commit them.
+- Webhook URL: `https://<service>.onrender.com/api/paypal/webhook`
+
+One process keeps the roster, the outbox, and the webhook handler together.
+
+### Vercel
+
+`vercel.json` builds the static app and routes `/api/*` to `api/index.ts` (the same Express app). Set the same environment variables in the Vercel project, including `PUBLIC_BASE_URL`.
+
+Serverless instances do not share a disk. The ledger lives in `/tmp` for that instance, so a webhook can hit a different instance from the browser tab. Use Render when the roster and webhooks must stay on one machine. Vercel is still a valid way to host the UI; point `VITE_API_BASE` at the Render origin if you split them, and set `CORS_ORIGIN` on the API.
+
+## Environment
+
+See [.env.example](.env.example). Never commit `.env`.
+
+| Variable | Role |
+| --- | --- |
+| `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | Sandbox REST app. The client id is public in the browser SDK. The secret stays on the server |
+| `PAYPAL_MERCHANT_EMAIL` | Required for Invoicing. Sandbox business email that owns the REST app. No default |
+| `PAYPAL_SPEAKER_EMAIL` | Sandbox personal email for the speaker payout |
+| `PAYPAL_WEBHOOK_ID` | Optional signature verification |
+| `MOCK_PAYPAL` | `1` forces simulation. Unset with keys uses the sandbox. `0` with no keys disables money buttons |
+| `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL` | Optional model |
+| `RESEND_API_KEY` or `SMTP_*` | Optional email. Otherwise the outbox |
+| `PORT`, `PUBLIC_BASE_URL`, `CORS_ORIGIN`, `CLUBFLOW_STORE` | Host and ledger |
+
+## Significant update since Oct 1, 2026
+
+This hackathon pass adds the money desk on top of the October copy generator. The copy generator, marketplace, and MIT license stay.
+
+- Express API beside the Vite app, one `npm install && npm run dev` entry
+- Seeded USD workshop roster (registration 12, speaker fee 150, dues 8/month, sponsor invoice 500, suggested donation 25)
+- PayPal Checkout (Orders v2) and JavaScript SDK buttons, plus a mock pay button
+- Webhook handler that marks the roster paid or refunded and writes a receipt
+- Invoicing v2 create and send, with confirm before send
+- Donation capture, thank-you email, and PDF certificate
+- Payouts API for the speaker fee. The roster uses the payout **item** status (`SUCCESS`, `UNCLAIMED`, `FAILED`, `PENDING`), not the batch status alone
+- Subscriptions API (product, plan, subscription approve link)
+- One-click refund that updates the roster
+- Transaction Search with a local ledger fallback and CSV reimbursement report
+- Officer agent on the PayPal agent toolkit, with a no-key intent parser and a confirm step before refund, payout, or invoice send
+- In-app outbox when no email provider is configured
+- Render and Vercel deploy files
+- `.env.example` only. No secrets in git
 
 ## Limitations
 
-- **Generate only.** ClubFlow does not post to Instagram, send LINE or Gmail, create a Google Form, update Linktree, or submit anything to a school.
-- **Instagram Stories and the Meta Graph API.** Story publishing through the Graph API has no caption field. It also cannot attach poll stickers, question stickers, countdown stickers, or link stickers. Any text the viewer should read has to be burned into the image. ClubFlow does that, and it does not pretend those stickers exist.
-- **School documents** are filled drafts and deadline reminders. A human officer checks them against the current semester’s real forms and submits them. The app never asks for a school SSO or admin password.
-- **Prices** are a sample of the onboarding-plus-marketplace model. Nothing is charged.
-- **Budget lines, equipment, and the officer name on the school draft** are labeled samples. Replace them before anyone files.
-- **No live LLM.** An optional model key is intentionally not wired in, so a judge’s laptop always produces the same Traditional Chinese and English copy.
-- Sample people, the LINE id, and `example.com` links are fictional.
+- Sandbox only. There is no live PayPal environment in this repo.
+- Without credentials the desk simulates every PayPal call. The banner says so. `npm run check:mock` covers that path. This environment did not have sandbox keys, so the live sandbox buttons were not executed here.
+- Transaction Search in the sandbox can be empty for hours. The CSV still contains the local ledger.
+- Payout item status `UNCLAIMED` / `RECEIVER_UNREGISTERED` means `PAYPAL_SPEAKER_EMAIL` is not a sandbox personal account. The speaker is not marked paid until the item status is `SUCCESS`.
+- Invoicing requires `PAYPAL_MERCHANT_EMAIL`. A `403 NOT_AUTHORIZED` on Invoicing or Transaction Search means that checkbox is off on the sandbox app. The reimbursement report still uses the local ledger.
+- Seeded Mia, Priya, and Sofia captures are not real PayPal captures.
+- Marketplace NT$ prices are still a quote. They do not charge a card.
+- Channel copy is a template, not a model. The model is only the officer agent.
+- Story images still cannot include poll, question, countdown, or link stickers.
+- School forms are drafts. There is no school login.
 
-## Project layout
+## Layout
 
 | Path | Role |
 | --- | --- |
-| `index.html` | Page shell |
-| `src/main.ts` | Events, language, run workflow |
-| `src/render.ts` | Screens: home, brief, marketplace, gallery |
-| `src/styles.css` | Layout |
-| `src/i18n.ts` | Traditional Chinese and English UI |
-| `src/sample.ts` | The workshop brief |
-| `src/catalog.ts` | Modules, tiers, sample prices |
-| `src/generate.ts` | Channel copy |
-| `src/cards.ts` | Story, feed card, certificates |
-| `src/format.ts` | Dates, deadlines, escaping |
+| `src/desk.ts` | Money desk |
+| `src/generate.ts`, `src/render.ts` | Channel copy |
+| `server/app.ts` | HTTP API |
+| `server/paypal.ts` | Sandbox REST |
+| `server/money.ts` | Roster, receipts, certificates, report |
+| `server/agent.ts` | Toolkit tools, custom payout/webhook tools, intent parser |
+| `server/selfcheck.ts` | Mock end-to-end check |
 
 ## License
 

@@ -44,12 +44,12 @@ function sanitizeEnabled(raw: unknown): Record<ModuleId, boolean> {
 }
 
 function isView(value: unknown): value is View {
-  return value === "home" || value === "brief" || value === "market" || value === "outputs";
+  return value === "desk" || value === "home" || value === "brief" || value === "market" || value === "outputs";
 }
 
 export const state: AppState = {
-  lang: "zh",
-  view: "home",
+  lang: "en",
+  view: "desk",
   brief: emptyBrief(),
   briefSource: "empty",
   enabled: defaultEnabled(),

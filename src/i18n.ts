@@ -16,6 +16,7 @@ const zh = {
   navBrief: "活動簡表",
   navMarket: "模組市集",
   navOutputs: "產出",
+  navDesk: "金流",
   reset: "清空示範",
   resetConfirm: "清空這份活動簡表和已勾選的狀態？",
   replaceConfirm: "目前的簡表有改過。載入範例會蓋掉這些修改。",
@@ -163,6 +164,9 @@ const zh = {
   sigPresident: "社長",
   sigLead: "活動長",
   openSource: "本地示範 · 不需金鑰",
+  homeMoneyTitle: "這場活動的錢，走 PayPal",
+  homeMoneyBody: "報名費、贊助發票、捐款、講者費、月費、退款和報銷對帳都在金流桌。文案預覽留在同一頁。沒有沙盒金鑰時用模擬模式，不會動到真錢。",
+  homeMoneyCta: "打開金流桌",
 };
 
 const en: typeof zh = {
@@ -181,6 +185,7 @@ const en: typeof zh = {
   navBrief: "Brief",
   navMarket: "Marketplace",
   navOutputs: "Outputs",
+  navDesk: "Money desk",
   reset: "Reset demo",
   resetConfirm: "Clear this brief and the module selection?",
   replaceConfirm: "You edited the brief. Loading the sample will replace those edits.",
@@ -331,6 +336,9 @@ const en: typeof zh = {
   sigPresident: "President",
   sigLead: "Activity lead",
   openSource: "Local demo · no API key",
+  homeMoneyTitle: "Event money runs through PayPal",
+  homeMoneyBody: "Registration, sponsor invoices, donations, speaker fees, dues, refunds, and the reimbursement report live on the money desk. Channel copy stays on the same page. Without sandbox keys the desk runs in mock mode and does not move live money.",
+  homeMoneyCta: "Open the money desk",
 };
 
 export type MsgKey = keyof typeof zh;
