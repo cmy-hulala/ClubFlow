@@ -39,14 +39,17 @@ export function formatPaypalError(data: unknown, fallback: string): { message: s
   return { message: text || fallback, debugId, issues };
 }
 
-/** Turn a PayPal 403 NOT_AUTHORIZED into setup instructions. Other errors keep debug_id and issue codes. */
+/** Turn known PayPal sandbox failures into setup instructions. Other errors keep debug_id and issue codes. */
 export function paypalFailure(error: unknown, feature: "Invoicing" | "Transaction search"): Error {
   const message = error instanceof Error ? error.message : String(error);
   const denied = /403/.test(message) && /NOT_AUTHORIZED/i.test(message);
+  const taiwan = /TAIWAN_MERCHANT_TAIWAN_PAYER_RESTRICTED/.test(message);
   const checkbox = feature === "Invoicing" ? "Invoicing" : "Transaction search";
   const friendly = denied
     ? `${feature} is not enabled for this sandbox REST app (403 NOT_AUTHORIZED). In the PayPal Developer Dashboard open Apps & Credentials, select the sandbox app, and turn on the ${checkbox} checkbox. Save, then try again. ${message}`
-    : message;
+    : taiwan
+      ? `PayPal returned 406 TAIWAN_MERCHANT_TAIWAN_PAYER_RESTRICTED. A Taiwan sandbox merchant cannot invoice a Taiwan sandbox payer. Use a non-Taiwan recipient/buyer sandbox account. The seeded sponsor Lane Lab <lane.lab@example.com> is a working default. ${message}`
+      : message;
   if (error instanceof PaypalError) return new PaypalError(friendly, error.debugId, error.issues);
   return new Error(friendly);
 }
@@ -75,7 +78,9 @@ async function token(): Promise<string> {
   return data.access_token;
 }
 
-export async function paypal<T = Json>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+type PaypalInit = { method?: string; body?: unknown; headers?: Record<string, string> };
+
+async function paypalRaw<T = Json>(path: string, init?: PaypalInit): Promise<{ data: T; location?: string }> {
   const access = await token();
   const res = await fetch(`${config.paypalBase}${path}`, {
     method: init?.method ?? "GET",
@@ -84,6 +89,7 @@ export async function paypal<T = Json>(path: string, init?: { method?: string; b
       "Content-Type": "application/json",
       Accept: "application/json",
       "PayPal-Request-Id": randomUUID(),
+      ...init?.headers,
     },
     body: init?.body === undefined ? undefined : JSON.stringify(init.body),
   });
@@ -100,7 +106,33 @@ export async function paypal<T = Json>(path: string, init?: { method?: string; b
     const formatted = formatPaypalError(data, text.slice(0, 300) || res.statusText);
     throw new PaypalError(`PayPal ${res.status} ${path}: ${formatted.message}`, formatted.debugId, formatted.issues);
   }
-  return data as T;
+  return { data: data as T, location: res.headers.get("location") ?? undefined };
+}
+
+export async function paypal<T = Json>(path: string, init?: PaypalInit): Promise<T> {
+  const { data } = await paypalRaw<T>(path, init);
+  return data;
+}
+
+/** Invoicing v2 create often returns only `{rel, href, method}` or a Location header, not `id`. */
+export function invoiceIdFrom(data: unknown, location?: string | null): string | undefined {
+  const hrefs: string[] = [];
+  if (location) hrefs.push(location);
+  if (data && typeof data === "object") {
+    const record = data as Json;
+    if (typeof record.id === "string" && record.id.trim()) return record.id.trim();
+    if (typeof record.href === "string") hrefs.push(record.href);
+    if (Array.isArray(record.links)) {
+      for (const link of record.links) {
+        if (link && typeof link === "object" && typeof (link as Json).href === "string") hrefs.push((link as Json).href as string);
+      }
+    }
+  }
+  for (const href of hrefs) {
+    const match = href.match(/\/v2\/invoicing\/invoices\/([^/?#]+)/);
+    if (match?.[1]) return decodeURIComponent(match[1]);
+  }
+  return undefined;
 }
 
 export function orderApproveUrl(id: string, links?: { rel?: string; href?: string }[]): string {
@@ -184,8 +216,9 @@ export async function createInvoice(input: {
   const merchantEmail = requireMerchantEmail();
   const [given = "Sponsor", ...rest] = input.sponsorName.split(" ");
   const surname = rest.join(" ") || "Sponsor";
-  const data = await paypal<{ id?: string }>("/v2/invoicing/invoices", {
+  const { data, location } = await paypalRaw<{ id?: string; href?: string; links?: { href?: string }[] }>("/v2/invoicing/invoices", {
     method: "POST",
+    headers: { Prefer: "return=representation" },
     body: {
       detail: {
         invoice_number: input.number,
@@ -214,8 +247,9 @@ export async function createInvoice(input: {
       ],
     },
   });
-  if (!data.id) throw new Error("PayPal did not return an invoice id.");
-  return { id: data.id };
+  const id = invoiceIdFrom(data, location);
+  if (!id) throw new Error("PayPal did not return an invoice id.");
+  return { id };
 }
 
 export async function sendInvoice(invoiceId: string): Promise<void> {

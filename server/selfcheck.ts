@@ -66,6 +66,27 @@ await check("paypal errors keep issue and debug_id", async () => {
   const friendly = paypalFailure(denied, "Invoicing");
   assert(/Invoicing checkbox/i.test(friendly.message), friendly.message);
   assert(friendly.message.includes("debug_id=dbg403"), friendly.message);
+  const { invoiceIdFrom } = await import("./paypal.js");
+  const fromLink = invoiceIdFrom({
+    rel: "self",
+    href: "https://api.sandbox.paypal.com/v2/invoicing/invoices/INV2-ABC-123",
+    method: "GET",
+  });
+  assert(fromLink === "INV2-ABC-123", String(fromLink));
+  const fromLocation = invoiceIdFrom({}, "https://api.sandbox.paypal.com/v2/invoicing/invoices/INV2-LOC");
+  assert(fromLocation === "INV2-LOC", String(fromLocation));
+  assert(invoiceIdFrom({ id: "INV2-FULL" }) === "INV2-FULL", "id field");
+  const taiwan = paypalFailure(
+    new PaypalError(
+      "PayPal 406 /v2/invoicing/invoices: TAIWAN_MERCHANT_TAIWAN_PAYER_RESTRICTED — debug_id=dbg406",
+      "dbg406",
+      ["TAIWAN_MERCHANT_TAIWAN_PAYER_RESTRICTED"],
+    ),
+    "Invoicing",
+  );
+  assert(/non-Taiwan recipient\/buyer sandbox account/.test(taiwan.message), taiwan.message);
+  assert(taiwan.message.includes("TAIWAN_MERCHANT_TAIWAN_PAYER_RESTRICTED"), taiwan.message);
+  assert(taiwan.message.includes("lane.lab@example.com"), taiwan.message);
   let missingEmail = false;
   try {
     requireMerchantEmail();
