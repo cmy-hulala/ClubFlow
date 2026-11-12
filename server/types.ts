@@ -10,6 +10,9 @@ export type Attendee = {
   amountUsd: string;
   orderId?: string;
   captureId?: string;
+  approveUrl?: string;
+  payoutStatus?: string;
+  payoutDetail?: string;
   receiptSent: boolean;
   thanksSent: boolean;
 };
@@ -51,7 +54,10 @@ export type PayoutRecord = {
   name: string;
   email: string;
   amountUsd: string;
+  /** PayPal payout item transaction_status, not the batch status. */
   status: string;
+  batchStatus?: string;
+  error?: string;
   at: string;
 };
 

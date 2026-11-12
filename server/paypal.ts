@@ -1,19 +1,54 @@
 import { randomUUID } from "node:crypto";
-import { config } from "./config.js";
+import { config, requireMerchantEmail } from "./config.js";
 
 type Json = Record<string, unknown>;
 
 let cached: { value: string; exp: number } | null = null;
 
-function paypalMessage(data: unknown, fallback: string): string {
-  if (!data || typeof data !== "object") return fallback;
+export class PaypalError extends Error {
+  debugId?: string;
+  issues: string[];
+
+  constructor(message: string, debugId?: string, issues: string[] = []) {
+    super(message);
+    this.name = "PaypalError";
+    this.debugId = debugId;
+    this.issues = issues;
+  }
+}
+
+export function formatPaypalError(data: unknown, fallback: string): { message: string; debugId?: string; issues: string[] } {
+  if (!data || typeof data !== "object") return { message: fallback, issues: [] };
   const record = data as Json;
   const details = Array.isArray(record.details) ? record.details : [];
-  const first = details[0] as Json | undefined;
-  const detail = typeof first?.description === "string" ? first.description : "";
+  const issues: string[] = [];
+  const detailBits: string[] = [];
+  for (const item of details) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Json;
+    const issue = typeof row.issue === "string" ? row.issue : "";
+    const description = typeof row.description === "string" ? row.description : "";
+    if (issue) issues.push(issue);
+    const bit = [issue, description].filter(Boolean).join(": ");
+    if (bit) detailBits.push(bit);
+  }
   const message = typeof record.message === "string" ? record.message : "";
   const name = typeof record.name === "string" ? record.name : "";
-  return [name, message, detail].filter(Boolean).join(" — ") || fallback;
+  const debugId = typeof record.debug_id === "string" ? record.debug_id : undefined;
+  const text = [name, message, ...detailBits, debugId ? `debug_id=${debugId}` : ""].filter(Boolean).join(" — ");
+  return { message: text || fallback, debugId, issues };
+}
+
+/** Turn a PayPal 403 NOT_AUTHORIZED into setup instructions. Other errors keep debug_id and issue codes. */
+export function paypalFailure(error: unknown, feature: "Invoicing" | "Transaction search"): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  const denied = /403/.test(message) && /NOT_AUTHORIZED/i.test(message);
+  const checkbox = feature === "Invoicing" ? "Invoicing" : "Transaction search";
+  const friendly = denied
+    ? `${feature} is not enabled for this sandbox REST app (403 NOT_AUTHORIZED). In the PayPal Developer Dashboard open Apps & Credentials, select the sandbox app, and turn on the ${checkbox} checkbox. Save, then try again. ${message}`
+    : message;
+  if (error instanceof PaypalError) return new PaypalError(friendly, error.debugId, error.issues);
+  return new Error(friendly);
 }
 
 async function token(): Promise<string> {
@@ -32,7 +67,8 @@ async function token(): Promise<string> {
   });
   const data = (await res.json()) as Json;
   if (!res.ok || typeof data.access_token !== "string") {
-    throw new Error(`PayPal auth failed: ${paypalMessage(data, res.statusText)}`);
+    const formatted = formatPaypalError(data, res.statusText);
+    throw new PaypalError(`PayPal auth failed: ${formatted.message}`, formatted.debugId, formatted.issues);
   }
   const expires = typeof data.expires_in === "number" ? data.expires_in : 300;
   cached = { value: data.access_token, exp: Date.now() + expires * 1000 };
@@ -61,17 +97,24 @@ export async function paypal<T = Json>(path: string, init?: { method?: string; b
     }
   }
   if (!res.ok) {
-    throw new Error(`PayPal ${res.status} ${path}: ${paypalMessage(data, text.slice(0, 300) || res.statusText)}`);
+    const formatted = formatPaypalError(data, text.slice(0, 300) || res.statusText);
+    throw new PaypalError(`PayPal ${res.status} ${path}: ${formatted.message}`, formatted.debugId, formatted.issues);
   }
   return data as T;
+}
+
+export function orderApproveUrl(id: string, links?: { rel?: string; href?: string }[]): string {
+  const href = links?.find((link) => link.rel === "approve")?.href;
+  if (href) return href;
+  return `https://www.sandbox.paypal.com/checkoutnow?token=${encodeURIComponent(id)}`;
 }
 
 export async function createOrder(input: {
   amount: string;
   customId: string;
   description: string;
-}): Promise<{ id: string }> {
-  const data = await paypal<{ id?: string }>("/v2/checkout/orders", {
+}): Promise<{ id: string; approveUrl: string }> {
+  const data = await paypal<{ id?: string; links?: { rel?: string; href?: string }[] }>("/v2/checkout/orders", {
     method: "POST",
     body: {
       intent: "CAPTURE",
@@ -85,7 +128,7 @@ export async function createOrder(input: {
     },
   });
   if (!data.id) throw new Error("PayPal did not return an order id.");
-  return { id: data.id };
+  return { id: data.id, approveUrl: orderApproveUrl(data.id, data.links) };
 }
 
 export function captureIdOf(order: Json): string | undefined {
@@ -138,6 +181,7 @@ export async function createInvoice(input: {
   memo: string;
   itemName: string;
 }): Promise<{ id: string }> {
+  const merchantEmail = requireMerchantEmail();
   const [given = "Sponsor", ...rest] = input.sponsorName.split(" ");
   const surname = rest.join(" ") || "Sponsor";
   const data = await paypal<{ id?: string }>("/v2/invoicing/invoices", {
@@ -150,7 +194,7 @@ export async function createInvoice(input: {
         payment_term: { term_type: "DUE_ON_RECEIPT" },
       },
       invoicer: {
-        email_address: config.merchantEmail,
+        email_address: merchantEmail,
         name: { given_name: "ClubFlow", surname: "EIC" },
       },
       primary_recipients: [
@@ -207,6 +251,42 @@ export async function createPayout(input: {
     },
   });
   return { batchId: data.batch_header?.payout_batch_id || input.batchId };
+}
+
+export type PayoutItemState = {
+  batchId: string;
+  batchStatus: string;
+  itemStatus: string;
+  detail: string;
+};
+
+export async function getPayoutBatch(batchId: string): Promise<PayoutItemState> {
+  const data = await paypal<{
+    batch_header?: { payout_batch_id?: string; batch_status?: string };
+    items?: {
+      transaction_status?: string;
+      errors?: { name?: string; message?: string };
+    }[];
+  }>(`/v1/payments/payouts/${encodeURIComponent(batchId)}`);
+  const item = data.items?.[0];
+  const errorName = item?.errors?.name ?? "";
+  const errorMessage = item?.errors?.message ?? "";
+  return {
+    batchId: data.batch_header?.payout_batch_id || batchId,
+    batchStatus: data.batch_header?.batch_status || "UNKNOWN",
+    itemStatus: item?.transaction_status || "PENDING",
+    detail: [errorName, errorMessage].filter(Boolean).join(": "),
+  };
+}
+
+/** Read the batch until the item is no longer PENDING/PROCESSING, or a few attempts have passed. */
+export async function pollPayoutBatch(batchId: string): Promise<PayoutItemState> {
+  let last = await getPayoutBatch(batchId);
+  for (let attempt = 0; attempt < 2 && (last.itemStatus === "PENDING" || last.itemStatus === "PROCESSING"); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    last = await getPayoutBatch(batchId);
+  }
+  return last;
 }
 
 export async function createProduct(name: string, description: string): Promise<{ id: string }> {

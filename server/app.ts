@@ -11,12 +11,14 @@ import {
   paySpeaker,
   publishDuesPlan,
   reconcile,
+  refreshOpenPayouts,
+  refreshPayoutStatuses,
   refundAttendee,
   reportCsv,
   simulateCaptureWebhook,
   subscribeMember,
 } from "./money.js";
-import { verifyWebhook } from "./paypal.js";
+import { PaypalError, verifyWebhook } from "./paypal.js";
 import { readStore, resetStore, takePending } from "./store.js";
 import type { PendingAction } from "./types.js";
 
@@ -46,8 +48,15 @@ function snapshot() {
 
 function fail(res: Response, error: unknown): void {
   const message = error instanceof Error ? error.message : "Request failed";
-  const status = /not found/i.test(message) ? 404 : /PayPal \d/.test(message) ? 502 : 400;
-  if (!res.headersSent) res.status(status).json({ error: message });
+  const paypalStatus = /PayPal (\d{3})/.exec(message);
+  const status = /not found/i.test(message) ? 404 : paypalStatus ? Number(paypalStatus[1]) : 400;
+  if (res.headersSent) return;
+  const body: { error: string; debug_id?: string; issues?: string[] } = { error: message };
+  if (error instanceof PaypalError) {
+    if (error.debugId) body.debug_id = error.debugId;
+    if (error.issues.length) body.issues = error.issues;
+  }
+  res.status(status).json(body);
 }
 
 function wrap(fn: (req: Request, res: Response) => Promise<void>) {
@@ -71,7 +80,11 @@ async function executePending(pending: PendingAction): Promise<string> {
   }
   if (pending.action === "payout") {
     const row = await paySpeaker(pending.attendeeId);
-    return `Speaker payout of ${row.amountUsd} USD to ${row.name} was submitted. Reference ${row.captureId}.`;
+    const detail = row.payoutDetail ? ` ${row.payoutDetail}.` : "";
+    if (row.payoutStatus === "SUCCESS") {
+      return `Speaker fee ${row.amountUsd} USD to ${row.name} item status SUCCESS. Reference ${row.captureId}.`;
+    }
+    return `Speaker payout ${row.captureId} for ${row.name}: item status ${row.payoutStatus || "PENDING"}.${detail} Batch success is not payment. The roster stays unpaid until PayPal reports item status SUCCESS. UNCLAIMED with RECEIVER_UNREGISTERED means PAYPAL_SPEAKER_EMAIL is not a sandbox personal account.`;
   }
   let invoiceId = pending.invoiceId;
   if (!invoiceId) {
@@ -130,6 +143,7 @@ export function createApp() {
   app.get(
     "/api/state",
     wrap(async (_req, res) => {
+      await refreshOpenPayouts();
       const ai = await agentMeta();
       res.json({ ...snapshot(), ai });
     }),
@@ -196,6 +210,16 @@ export function createApp() {
     "/api/payouts",
     wrap(async (req, res) => {
       const attendee = await paySpeaker(typeof req.body?.attendeeId === "string" ? req.body.attendeeId : undefined);
+      res.json({ attendee, state: snapshot() });
+    }),
+  );
+
+  app.post(
+    "/api/payouts/refresh",
+    wrap(async (req, res) => {
+      const attendeeId = String(req.body?.attendeeId ?? "");
+      const attendee = await refreshPayoutStatuses(attendeeId || undefined);
+      if (attendeeId && !attendee) throw new Error(`Attendee not found: ${attendeeId}`);
       res.json({ attendee, state: snapshot() });
     }),
   );

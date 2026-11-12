@@ -8,9 +8,14 @@ import {
   createPlan,
   createProduct,
   createSubscription,
+  getPayoutBatch,
+  orderApproveUrl,
+  paypalFailure,
+  pollPayoutBatch,
   refundCapture,
   searchTransactions,
   sendInvoice,
+  type PayoutItemState,
   type PaypalTxn,
 } from "./paypal.js";
 import { certificatePdf } from "./pdf.js";
@@ -49,7 +54,7 @@ export async function openCheckout(input: {
   donorName?: string;
   donorEmail?: string;
   amount?: string;
-}): Promise<{ id: string; attendeeId: string }> {
+}): Promise<{ id: string; attendeeId: string; approveUrl: string }> {
   assertReady();
   const event = readStore().event;
   let attendeeId = input.attendeeId ?? "";
@@ -83,15 +88,23 @@ export async function openCheckout(input: {
       });
     });
   }
-  const orderId =
-    config.mode === "sandbox"
-      ? (await createOrder({ amount, customId: attendeeId, description })).id
-      : `MOCK-ORDER-${nid("ord")}`;
+  let orderId = "";
+  let approveUrl = "";
+  if (config.mode === "sandbox") {
+    const created = await createOrder({ amount, customId: attendeeId, description });
+    orderId = created.id;
+    approveUrl = created.approveUrl;
+  } else {
+    orderId = `MOCK-ORDER-${nid("ord")}`;
+    approveUrl = orderApproveUrl(orderId);
+  }
   updateStore((store) => {
     const row = store.attendees.find((item) => item.id === attendeeId);
-    if (row) row.orderId = orderId;
+    if (!row) return;
+    row.orderId = orderId;
+    row.approveUrl = approveUrl;
   });
-  return { id: orderId, attendeeId };
+  return { id: orderId, attendeeId, approveUrl };
 }
 
 async function receiptFor(attendee: Attendee, reference: string): Promise<void> {
@@ -249,14 +262,23 @@ export async function draftInvoice(input: {
   const amount = usd(input.amount || event.sponsorInvoiceUsd);
   const memo = (input.memo || `Sponsorship for ${event.title}`).trim();
   const number = `EIC-${Date.now().toString().slice(-8)}`;
-  const paypalId = config.mode === "sandbox" ? (await createInvoice({
-    number,
-    sponsorName,
-    sponsorEmail,
-    amount,
-    memo,
-    itemName: `Sponsorship — ${event.title}`.slice(0, 200),
-  })).id : undefined;
+  let paypalId: string | undefined;
+  if (config.mode === "sandbox") {
+    try {
+      paypalId = (
+        await createInvoice({
+          number,
+          sponsorName,
+          sponsorEmail,
+          amount,
+          memo,
+          itemName: `Sponsorship — ${event.title}`.slice(0, 200),
+        })
+      ).id;
+    } catch (error) {
+      throw paypalFailure(error, "Invoicing");
+    }
+  }
   const record: InvoiceRecord = {
     id: nid("inv"),
     paypalId,
@@ -281,7 +303,11 @@ export async function deliverInvoice(invoiceId: string): Promise<InvoiceRecord> 
   if (current.status === "sent") return current;
   if (config.mode === "sandbox") {
     if (!current.paypalId) throw new Error("This draft has no PayPal invoice id.");
-    await sendInvoice(current.paypalId);
+    try {
+      await sendInvoice(current.paypalId);
+    } catch (error) {
+      throw paypalFailure(error, "Invoicing");
+    }
   }
   const event = readStore().event;
   await deliver({
@@ -318,44 +344,116 @@ export async function paySpeaker(attendeeId?: string): Promise<Attendee> {
     (attendeeId ? store.attendees.find((item) => item.id === attendeeId) : undefined) ??
     store.attendees.find((item) => item.role === "speaker");
   if (!speaker || speaker.role !== "speaker") throw new Error("No speaker is on the roster.");
-  if (speaker.status === "paid") throw new Error(`${speaker.name} has already been paid.`);
+  if (speaker.status === "paid" || speaker.payoutStatus === "SUCCESS") {
+    throw new Error(`${speaker.name} has already been paid ${speaker.amountUsd} USD.`);
+  }
+  if (speaker.payoutStatus && !["FAILED", "RETURNED", "BLOCKED", "REFUNDED", "REVERSED"].includes(speaker.payoutStatus)) {
+    throw new Error(
+      `${speaker.name}'s payout item is ${speaker.payoutStatus}${speaker.payoutDetail ? ` (${speaker.payoutDetail})` : ""}. A PayPal batch can look successful while the receiver is still UNCLAIMED. Refresh payout status instead of sending another batch. The roster stays unpaid until the item status is SUCCESS.`,
+    );
+  }
   const batchKey = `batch_${nid("po")}`;
-  const payout =
-    config.mode === "sandbox"
-      ? await createPayout({
-          email: speaker.email,
-          amount: speaker.amountUsd,
-          note: `Speaker fee for ${store.event.title}`,
-          batchId: batchKey,
-        })
-      : { batchId: `MOCK-PAYOUT-${batchKey}` };
-  updateStore((data) => {
-    const row = data.attendees.find((item) => item.id === speaker.id);
-    if (!row) return;
-    row.status = "paid";
-    row.captureId = payout.batchId;
-    data.payouts.unshift({
-      id: nid("pay"),
-      paypalBatchId: payout.batchId,
-      attendeeId: row.id,
-      name: row.name,
-      email: row.email,
-      amountUsd: row.amountUsd,
-      status: "SUCCESS",
-      at: nowIso(),
+  if (config.mode === "sandbox") {
+    const created = await createPayout({
+      email: speaker.email,
+      amount: speaker.amountUsd,
+      note: `Speaker fee for ${store.event.title}`,
+      batchId: batchKey,
     });
-    ledger(data, {
-      type: "payout",
-      counterparty: row.name,
-      email: row.email,
-      amountUsd: row.amountUsd,
-      status: "SUCCESS",
-      reference: payout.batchId,
-      note: "Speaker fee",
-      source: source(),
+    const polled = await pollPayoutBatch(created.batchId);
+    rememberPayout(speaker.id, polled);
+  } else {
+    rememberPayout(speaker.id, {
+      batchId: `MOCK-PAYOUT-${batchKey}`,
+      batchStatus: "SUCCESS",
+      itemStatus: "SUCCESS",
+      detail: "",
     });
-  });
+  }
   return requireAttendee(speaker.id);
+}
+
+const OPEN_PAYOUT = new Set(["PENDING", "PROCESSING", "UNCLAIMED", "ONHOLD"]);
+let nextPayoutPoll = 0;
+
+function rememberPayout(attendeeId: string, snap: PayoutItemState): void {
+  updateStore((store) => {
+    const speaker = store.attendees.find((item) => item.id === attendeeId);
+    let payout = store.payouts.find((item) => item.paypalBatchId === snap.batchId);
+    if (!payout) {
+      payout = {
+        id: nid("pay"),
+        paypalBatchId: snap.batchId,
+        attendeeId,
+        name: speaker?.name ?? "",
+        email: speaker?.email ?? "",
+        amountUsd: speaker?.amountUsd ?? "0.00",
+        status: snap.itemStatus,
+        batchStatus: snap.batchStatus,
+        error: snap.detail,
+        at: nowIso(),
+      };
+      store.payouts.unshift(payout);
+    } else {
+      payout.status = snap.itemStatus;
+      payout.batchStatus = snap.batchStatus;
+      payout.error = snap.detail;
+    }
+    if (speaker) {
+      speaker.captureId = snap.batchId;
+      speaker.payoutStatus = snap.itemStatus;
+      speaker.payoutDetail = snap.detail;
+      speaker.status = snap.itemStatus === "SUCCESS" ? "paid" : "unpaid";
+    }
+    const note = snap.detail
+      ? `Speaker fee · batch ${snap.batchStatus} · item ${snap.itemStatus} · ${snap.detail}`
+      : `Speaker fee · batch ${snap.batchStatus} · item ${snap.itemStatus}`;
+    const existing = store.ledger.find((row) => row.type === "payout" && row.reference === snap.batchId);
+    if (existing) {
+      existing.status = snap.itemStatus;
+      existing.note = note;
+    } else if (speaker) {
+      ledger(store, {
+        type: "payout",
+        counterparty: speaker.name,
+        email: speaker.email,
+        amountUsd: speaker.amountUsd,
+        status: snap.itemStatus,
+        reference: snap.batchId,
+        note,
+        source: source(),
+      });
+    }
+  });
+}
+
+export async function refreshPayoutStatuses(attendeeId?: string): Promise<Attendee | undefined> {
+  assertReady();
+  const targets = readStore().payouts.filter((item) => {
+    if (!item.paypalBatchId) return false;
+    if (attendeeId) return item.attendeeId === attendeeId;
+    return OPEN_PAYOUT.has(item.status);
+  });
+  if (config.mode === "sandbox") {
+    for (const payout of targets) {
+      if (!payout.paypalBatchId) continue;
+      const snap = await getPayoutBatch(payout.paypalBatchId);
+      rememberPayout(payout.attendeeId, snap);
+    }
+  }
+  return attendeeId ? findAttendee(attendeeId) : undefined;
+}
+
+export async function refreshOpenPayouts(): Promise<void> {
+  if (config.mode !== "sandbox" || Date.now() < nextPayoutPoll) return;
+  const open = readStore().payouts.some((item) => item.paypalBatchId && OPEN_PAYOUT.has(item.status));
+  if (!open) return;
+  nextPayoutPoll = Date.now() + 15_000;
+  try {
+    await refreshPayoutStatuses();
+  } catch {
+    /* keep the last item status already stored */
+  }
 }
 
 export async function publishDuesPlan(planId?: string): Promise<PlanRecord> {
@@ -651,18 +749,20 @@ export async function reconcile(): Promise<Report> {
     try {
       paypalRows = await searchTransactions();
     } catch (error) {
-      paypalError = error instanceof Error ? error.message : "Transaction Search failed";
+      paypalError = paypalFailure(error, "Transaction search").message;
     }
   }
   const inflow = rows.filter((row) => row.type === "capture" || row.type === "donation").reduce((sum, row) => sum + Number(row.amountUsd), 0);
   const refunded = rows.filter((row) => row.type === "refund").reduce((sum, row) => sum + Number(row.amountUsd), 0);
-  const payouts = rows.filter((row) => row.type === "payout").reduce((sum, row) => sum + Number(row.amountUsd), 0);
+  const payouts = rows
+    .filter((row) => row.type === "payout" && row.status === "SUCCESS")
+    .reduce((sum, row) => sum + Number(row.amountUsd), 0);
   const invoices = rows.filter((row) => row.type === "invoice").reduce((sum, row) => sum + Number(row.amountUsd), 0);
   const emptyPaypal = config.mode === "sandbox" && !paypalError && paypalRows.length === 0;
   const notice = config.mode !== "sandbox"
     ? "PayPal Transaction Search runs only against the sandbox. This reimbursement pack uses the local capture, webhook, refund, and payout ledger."
     : paypalError
-      ? `Transaction Search was not available (${paypalError}). Sandbox reporting often lags for hours and needs the Transaction Search permission. The pack below is the local ledger.`
+      ? `Transaction Search was not available. ${paypalError} The reimbursement pack below is still the local capture and webhook ledger.`
       : emptyPaypal
         ? "Transaction Search returned no rows. Sandbox reporting often lags for hours after a capture. The pack below is the local ledger of captures and webhooks."
         : "Transaction Search returned rows. They are listed beside the local ledger, which is still the book the club files for reimbursement.";

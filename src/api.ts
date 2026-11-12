@@ -32,6 +32,9 @@ export type Attendee = {
   amountUsd: string;
   orderId?: string;
   captureId?: string;
+  approveUrl?: string;
+  payoutStatus?: string;
+  payoutDetail?: string;
 };
 
 export type DeskState = {

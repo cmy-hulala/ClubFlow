@@ -47,6 +47,34 @@ async function check(name: string, fn: () => Promise<void>) {
   }
 }
 
+await check("paypal errors keep issue and debug_id", async () => {
+  const { formatPaypalError, paypalFailure, PaypalError } = await import("./paypal.js");
+  const { requireMerchantEmail } = await import("./config.js");
+  const text = formatPaypalError(
+    {
+      name: "UNPROCESSABLE_ENTITY",
+      message: "The requested action could not be performed.",
+      debug_id: "dbg123",
+      details: [{ issue: "ORDER_NOT_APPROVED", description: "Payer has not yet approved the Order." }],
+    },
+    "fallback",
+  );
+  assert(text.message.includes("ORDER_NOT_APPROVED"), text.message);
+  assert(text.message.includes("debug_id=dbg123"), text.message);
+  assert(text.issues.includes("ORDER_NOT_APPROVED"), text.issues.join(","));
+  const denied = new PaypalError("PayPal 403 /v2/invoicing/invoices: NOT_AUTHORIZED — debug_id=dbg403", "dbg403", ["NOT_AUTHORIZED"]);
+  const friendly = paypalFailure(denied, "Invoicing");
+  assert(/Invoicing checkbox/i.test(friendly.message), friendly.message);
+  assert(friendly.message.includes("debug_id=dbg403"), friendly.message);
+  let missingEmail = false;
+  try {
+    requireMerchantEmail();
+  } catch (error) {
+    missingEmail = error instanceof Error && error.message.includes("PAYPAL_MERCHANT_EMAIL");
+  }
+  assert(missingEmail, "invoicing should require PAYPAL_MERCHANT_EMAIL");
+});
+
 await check("health is mock", async () => {
   const res = await api("/api/health");
   assert(res.status === 200, `status ${res.status}`);
@@ -67,8 +95,10 @@ await check("registration checkout and receipt", async () => {
     method: "POST",
     body: JSON.stringify({ kind: "registration", attendeeId: "att_jonah" }),
   });
-  const order = created.body as { id?: string };
+  const order = created.body as { id?: string; approveUrl?: string };
   assert(created.status === 200 && order.id, JSON.stringify(created.body));
+  assert(order.approveUrl?.includes("checkoutnow?token="), JSON.stringify(created.body));
+  assert(order.approveUrl?.includes(order.id), order.approveUrl);
   const captured = await api(`/api/checkout/orders/${order.id}/capture`, { method: "POST", body: "{}" });
   const state = (captured.body as { attendee?: { status?: string }; state?: { outbox: { to: string; kind: string }[] } }).state;
   assert((captured.body as { attendee?: { status?: string } }).attendee?.status === "paid", "jonah not paid");
@@ -137,7 +167,8 @@ await check("donation certificate and thanks", async () => {
 
 await check("speaker payout", async () => {
   const res = await api("/api/payouts", { method: "POST", body: JSON.stringify({ attendeeId: "spk_ken" }) });
-  assert((res.body as { attendee?: { status?: string } }).attendee?.status === "paid", JSON.stringify(res.body));
+  assert((res.body as { attendee?: { status?: string; payoutStatus?: string } }).attendee?.status === "paid", JSON.stringify(res.body));
+  assert((res.body as { attendee?: { payoutStatus?: string } }).attendee?.payoutStatus === "SUCCESS", JSON.stringify(res.body));
   const again = await api("/api/payouts", { method: "POST", body: JSON.stringify({ attendeeId: "spk_ken" }) });
   assert(again.status === 400, "second payout should fail");
 });

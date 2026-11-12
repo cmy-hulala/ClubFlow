@@ -129,7 +129,7 @@ function rosterText(): string {
   return readStore()
     .attendees.map(
       (row) =>
-        `${row.name} | ${row.role} | ${row.status} | ${row.amountUsd} USD | id ${row.id} | capture ${row.captureId ?? "-"} | order ${row.orderId ?? "-"}`,
+        `${row.name} | ${row.role} | ${row.status} | payout ${row.payoutStatus ?? "-"} ${row.payoutDetail ?? ""} | ${row.amountUsd} USD | id ${row.id} | capture ${row.captureId ?? "-"} | order ${row.orderId ?? "-"} | approve ${row.approveUrl ?? "-"}`,
     )
     .join("\n");
 }
@@ -161,12 +161,19 @@ function holdRefund(attendee: Attendee): PendingAction {
 function holdPayout(): PendingAction {
   const speaker = readStore().attendees.find((row) => row.role === "speaker");
   if (!speaker) throw new Error("No speaker is on the roster.");
-  if (speaker.status === "paid") throw new Error(`${speaker.name} has already been paid ${speaker.amountUsd} USD.`);
+  if (speaker.status === "paid" || speaker.payoutStatus === "SUCCESS") {
+    throw new Error(`${speaker.name} has already been paid ${speaker.amountUsd} USD (payout item SUCCESS).`);
+  }
+  if (speaker.payoutStatus && !["FAILED", "RETURNED", "BLOCKED", "REFUNDED", "REVERSED"].includes(speaker.payoutStatus)) {
+    throw new Error(
+      `${speaker.name}'s payout item is ${speaker.payoutStatus}${speaker.payoutDetail ? ` (${speaker.payoutDetail})` : ""}. Do not say they were paid. Refresh payout status. UNCLAIMED often means RECEIVER_UNREGISTERED until PAYPAL_SPEAKER_EMAIL is a sandbox personal account.`,
+    );
+  }
   return rememberPending({
     id: nid("cnf"),
     action: "payout",
     attendeeId: speaker.id,
-    summary: `Pay ${speaker.name} a ${speaker.amountUsd} USD speaker fee at ${speaker.email}.`,
+    summary: `Pay ${speaker.name} a ${speaker.amountUsd} USD speaker fee at ${speaker.email}. The roster is paid only if the payout item status comes back SUCCESS.`,
     at: nowIso(),
   });
 }
@@ -316,6 +323,7 @@ function systemPrompt(): string {
     "Channel copy for Instagram, LINE, and email is generated in the left panel from the event brief. Do not invent a different event.",
     "Use PayPal agent toolkit tools for PayPal reads and for creating draft orders, invoices, products, and subscription plans.",
     "The toolkit does not cover Payouts or webhooks. Use propose_payout and club_webhook_status for those.",
+    "A PayPal payout batch_status of SUCCESS is not payment. The item transaction_status may be UNCLAIMED, FAILED, PENDING, or SUCCESS. Say the speaker was paid only when the item status is SUCCESS.",
     "Never claim a refund, payout, or invoice send succeeded. Call propose_refund, propose_payout, or propose_send_invoice and wait for the officer to confirm in the UI.",
     "Do not call create_refund, send_invoice, or pay_order. Those are intercepted.",
     `Event: ${event.title} on ${event.date} ${event.startTime}-${event.endTime} at ${event.venue}.`,

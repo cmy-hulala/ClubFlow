@@ -436,6 +436,7 @@ dialog img { max-width: 92vw; max-height: 88vh; border-radius: 12px; display: bl
 .chat-form { align-items: stretch; }
 .chat-form textarea { min-height: 72px; resize: vertical; }
 .paypal-slot, #pp-donation { min-height: 36px; margin-top: 8px; }
+.stack { display: grid; gap: 4px; }
 .desk-copy .prose { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .desk-copy .shot { width: min(220px, 100%); }
 .desk-copy .shot img { width: 100%; height: auto; }

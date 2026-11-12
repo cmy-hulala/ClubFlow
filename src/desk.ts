@@ -57,6 +57,9 @@ const en = {
   tools: "Tools",
   nothingMoved: "Nothing moves until you confirm.",
   approve: "Sandbox buyer approves in the PayPal window.",
+  openApproval: "Open PayPal approval",
+  captureApproved: "Capture approved payment",
+  refreshPayout: "Refresh payout status",
 };
 
 const zh: typeof en = {
@@ -110,6 +113,9 @@ const zh: typeof en = {
   tools: "工具",
   nothingMoved: "你按確認之前，錢不會動。",
   approve: "沙盒買家會在 PayPal 視窗裡同意。",
+  openApproval: "開啟 PayPal 同意頁",
+  captureApproved: "入帳已同意的付款",
+  refreshPayout: "重新查詢撥款狀態",
 };
 
 type Copy = typeof en;
@@ -311,7 +317,7 @@ function middle(copy: Copy, off: boolean): string {
       <label>${esc(copy.name)}<input name="donorName" value="Riley Patron" ${disabled} /></label>
       <label>${esc(copy.email)}<input name="donorEmail" type="email" value="riley.patron@example.com" ${disabled} /></label>
       <label>${esc(copy.amount)}<input name="amount" value="${esc(event.donationUsd)}" ${disabled} /></label>
-      ${off ? "" : snap.mode === "sandbox" ? `<div id="pp-donation"></div><p class="quiet">${esc(copy.approve)}</p>` : `<button type="submit" class="btn tiny">${esc(copy.mockPay)} ${esc(event.donationUsd)} USD</button>`}
+      ${off ? "" : snap.mode === "sandbox" ? `<div id="pp-donation"></div><button type="button" class="btn tiny secondary" data-desk="donation-approve">${esc(copy.openApproval)}</button><p class="quiet">${esc(copy.approve)} Pattern: https://www.sandbox.paypal.com/checkoutnow?token=ORDER_ID</p>` : `<button type="submit" class="btn tiny">${esc(copy.mockPay)} ${esc(event.donationUsd)} USD</button>`}
     </form>
     <form class="desk-card" data-desk-form="dues">
       <h3>${esc(copy.duesTitle)}</h3>
@@ -333,17 +339,46 @@ function middle(copy: Copy, off: boolean): string {
   </section>`;
 }
 
+function approvalFallback(row: Attendee, copy: Copy, off: boolean): string {
+  const disabled = off ? "disabled" : "";
+  const link = row.approveUrl
+    ? `<a href="${esc(row.approveUrl)}" target="_blank" rel="noreferrer">${esc(copy.openApproval)}</a>`
+    : `<button type="button" class="btn tiny secondary" data-desk="approve-pay" data-id="${esc(row.id)}" ${disabled}>${esc(copy.openApproval)}</button>`;
+  const capture = row.orderId
+    ? `<button type="button" class="btn tiny secondary" data-desk="capture-pay" data-id="${esc(row.id)}" ${disabled}>${esc(copy.captureApproved)}</button>`
+    : "";
+  return `<div class="btn-row">${link}${capture}</div>`;
+}
+
 function actionCell(row: Attendee, copy: Copy, off: boolean, certId?: string): string {
   const disabled = off ? "disabled" : "";
   if (row.role === "speaker") {
-    if (row.status === "paid") return esc(copy.paidWord);
-    return `<button type="button" class="btn tiny" data-desk="ask-payout" data-id="${esc(row.id)}" ${disabled}>${esc(copy.payout)}</button>`;
+    const item = row.payoutStatus;
+    if (item === "SUCCESS" || (row.status === "paid" && !item)) return esc(copy.paidWord);
+    const failed = item === "FAILED" || item === "RETURNED" || item === "BLOCKED" || item === "REVERSED" || item === "REFUNDED";
+    const pill = item ? `<span class="pill ${failed ? "st-refunded" : "st-unpaid"}">${esc(item)}</span>` : "";
+    const detail = row.payoutDetail ? `<p class="quiet">${esc(row.payoutDetail)}</p>` : "";
+    const refresh = item
+      ? `<button type="button" class="btn tiny secondary" data-desk="refresh-payout" data-id="${esc(row.id)}" ${disabled}>${esc(copy.refreshPayout)}</button>`
+      : "";
+    const pay = !item || failed
+      ? `<button type="button" class="btn tiny" data-desk="ask-payout" data-id="${esc(row.id)}" ${disabled}>${esc(copy.payout)}</button>`
+      : "";
+    return `<div class="stack">${pill}${detail}<div class="btn-row">${pay}${refresh}</div></div>`;
   }
   if (row.role === "donor") {
-    return certId ? `<a href="${esc(apiRoot)}/api/certificates/${esc(certId)}.pdf" target="_blank" rel="noreferrer">${esc(state.lang === "zh" ? "證書" : "Certificate")}</a>` : esc(statusLabel(row.status));
+    const cert = certId
+      ? `<a href="${esc(apiRoot)}/api/certificates/${esc(certId)}.pdf" target="_blank" rel="noreferrer">${esc(state.lang === "zh" ? "證書" : "Certificate")}</a>`
+      : "";
+    if (row.status === "unpaid") return `${approvalFallback(row, copy, off)}`;
+    return cert || esc(statusLabel(row.status));
   }
-  if (row.status === "unpaid" && snap?.mode === "sandbox") return `<div id="pp-${esc(row.id)}" class="paypal-slot"></div>`;
-  if (row.status === "unpaid") return `<button type="button" class="btn tiny" data-desk="mock-pay" data-id="${esc(row.id)}" ${disabled}>${esc(copy.mockPay)} ${esc(row.amountUsd)} USD</button>`;
+  if (row.status === "unpaid" && snap?.mode === "sandbox") {
+    return `<div id="pp-${esc(row.id)}" class="paypal-slot"></div>${approvalFallback(row, copy, off)}`;
+  }
+  if (row.status === "unpaid") {
+    return `<button type="button" class="btn tiny" data-desk="mock-pay" data-id="${esc(row.id)}" ${disabled}>${esc(copy.mockPay)} ${esc(row.amountUsd)} USD</button>${approvalFallback(row, copy, off)}`;
+  }
   if (row.status === "paid" || row.status === "donated") {
     return `<button type="button" class="btn tiny secondary" data-desk="ask-refund" data-id="${esc(row.id)}" ${disabled}>${esc(copy.refund)}</button>`;
   }
@@ -549,6 +584,75 @@ async function onDesk(name: string, el: HTMLElement): Promise<void> {
       });
       await api(`/api/checkout/orders/${encodeURIComponent(created.id)}/capture`, { method: "POST", body: "{}" });
       flash = state.lang === "zh" ? "模擬付款完成，收據在寄件匣。" : "Mock payment captured. Receipt is in the outbox.";
+    });
+    return;
+  }
+  if (name === "approve-pay") {
+    const attendeeId = el.dataset.id ?? "";
+    const existing = snap.attendees.find((item) => item.id === attendeeId);
+    if (existing?.approveUrl) {
+      window.open(existing.approveUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+    await act(async () => {
+      const created = await api<{ id: string; approveUrl?: string }>("/api/checkout/orders", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: existing?.role === "donor" ? "donation" : "registration",
+          attendeeId,
+          donorName: existing?.name,
+          donorEmail: existing?.email,
+          amount: existing?.amountUsd,
+        }),
+      });
+      flash = created.approveUrl
+        ? `Open PayPal approval: ${created.approveUrl} Then press Capture approved payment. Log in as a sandbox personal buyer.`
+        : "PayPal order created.";
+    });
+    return;
+  }
+  if (name === "capture-pay") {
+    const row = snap.attendees.find((item) => item.id === el.dataset.id);
+    if (!row?.orderId) {
+      flash = "!Create the PayPal order before capturing it.";
+      paint();
+      return;
+    }
+    await act(async () => {
+      await api(`/api/checkout/orders/${encodeURIComponent(row.orderId ?? "")}/capture`, { method: "POST", body: "{}" });
+      flash = state.lang === "zh" ? "已入帳，收據在寄件匣。" : "Captured. The receipt is in the outbox.";
+    });
+    return;
+  }
+  if (name === "refresh-payout") {
+    const attendeeId = el.dataset.id ?? "";
+    await act(async () => {
+      const result = await api<{ attendee?: { payoutStatus?: string; payoutDetail?: string } }>("/api/payouts/refresh", {
+        method: "POST",
+        body: JSON.stringify({ attendeeId }),
+      });
+      const status = result.attendee?.payoutStatus || "unknown";
+      const detail = result.attendee?.payoutDetail ? ` ${result.attendee.payoutDetail}` : "";
+      flash = `Payout item status: ${status}.${detail}`;
+    });
+    return;
+  }
+  if (name === "donation-approve") {
+    const form = document.querySelector<HTMLFormElement>("#donation-form");
+    const data = new FormData(form ?? undefined);
+    await act(async () => {
+      const created = await api<{ approveUrl?: string }>("/api/checkout/orders", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: "donation",
+          donorName: String(data.get("donorName") ?? ""),
+          donorEmail: String(data.get("donorEmail") ?? ""),
+          amount: String(data.get("amount") ?? ""),
+        }),
+      });
+      flash = created.approveUrl
+        ? `Open PayPal approval: ${created.approveUrl} Sign in as a sandbox personal buyer, then press Capture approved payment on the new donor row.`
+        : "Donation order created.";
     });
     return;
   }

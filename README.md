@@ -107,13 +107,23 @@ npm start
 1. Sign in at [https://developer.paypal.com/dashboard/](https://developer.paypal.com/dashboard/).
 2. Switch to **Sandbox**. Open **Apps & Credentials** and create a REST app (or open the default sandbox app).
 3. Copy the **Client ID** and **Secret** into `.env` as `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET`.
-4. Under **Sandbox → Accounts**, copy the **business** account email into `PAYPAL_MERCHANT_EMAIL`. Invoicing sends as that account. The email must belong to the same sandbox business that owns the REST app.
-5. Create or open a **personal** sandbox account. That person is the buyer. Put their email in `PAYPAL_SPEAKER_EMAIL` if they should receive the speaker payout. Payouts only succeed to a sandbox account email.
-6. Leave `MOCK_PAYPAL` unset so the server uses the sandbox. Restart `npm run dev`. The banner should say the sandbox is connected.
-7. Optional webhook: in the app, add `https://<your-host>/api/paypal/webhook` for `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.REFUNDED`, `CHECKOUT.ORDER.APPROVED`, and `BILLING.SUBSCRIPTION.ACTIVATED`. Put the webhook id in `PAYPAL_WEBHOOK_ID`. Without that id, events are applied and marked unverified so a local demo still updates the roster. Do that only on a sandbox host.
-8. In the PayPal window, log in as the **sandbox personal** buyer. A live PayPal login will not pay a sandbox order.
+4. Under **Sandbox → Accounts**, copy the **business** account email into `PAYPAL_MERCHANT_EMAIL`. This variable is required for Invoicing. There is no default. PayPal rejects an invoice whose invoicer email is not that sandbox business account. If it is missing, invoice create returns a setup error instead of calling PayPal.
+5. Create or open a **personal** sandbox account under **Dashboard → Sandbox → Accounts**. That person is the buyer for checkout and for subscription approval. A live PayPal login cannot approve a sandbox order. Put that personal email in `PAYPAL_SPEAKER_EMAIL` so the speaker payout can reach `SUCCESS`. If the address is not a sandbox account, the payout batch can still say `SUCCESS` while the item stays `UNCLAIMED` with `RECEIVER_UNREGISTERED`. The roster stays unpaid until the item status is `SUCCESS`. Press **Refresh payout status** after you fix the email.
+6. On the sandbox REST app, enable the **Invoicing** and **Transaction search** checkboxes if those calls return `403 NOT_AUTHORIZED`. The desk says so in the error. The reimbursement report still builds from the local capture and webhook ledger when Transaction Search is unauthorized or empty.
+7. Leave `MOCK_PAYPAL` unset so the server uses the sandbox. Restart `npm run dev`. The banner should say the sandbox is connected.
+8. Optional webhook: in the app, add `https://<your-host>/api/paypal/webhook` for `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.REFUNDED`, `CHECKOUT.ORDER.APPROVED`, and `BILLING.SUBSCRIPTION.ACTIVATED`. Put the webhook id in `PAYPAL_WEBHOOK_ID`. Without that id, events are applied and marked unverified so a local demo still updates the roster. Do that only on a sandbox host.
 
-Transaction Search often needs to be enabled for the app and can lag for hours in the sandbox. The report always includes the local ledger of captures and webhooks, and it says so when PayPal returns nothing.
+`POST /api/checkout/orders` returns `approveUrl`, PayPal’s `rel: "approve"` link. The order pattern is:
+
+`https://www.sandbox.paypal.com/checkoutnow?token=<ORDER_ID>`
+
+Open that URL in a browser logged in as the sandbox personal buyer, approve, then press **Capture approved payment**. The same link is on the roster as **Open PayPal approval** when the JavaScript SDK button is missing. Subscription approval uses the `approveUrl` on the subscription response, typically:
+
+`https://www.sandbox.paypal.com/webapps/billing/subscriptions?ba_token=<BA-...>`
+
+The same sandbox personal account approves that link.
+
+Transaction Search can also lag for hours after a successful capture. An empty result still leaves the local ledger in the CSV.
 
 Seeded rows named Mia, Priya, and Sofia are history, not sandbox captures. In sandbox mode, refund those only after a new sandbox payment. Mock mode refunds them so the confirm flow is visible without keys.
 
@@ -133,12 +143,12 @@ npm run dev
 5. **Sponsor invoice.** Create draft, then **Send invoice**, then **Confirm**. Lane Lab’s copy is in the outbox.
 6. **Sponsor donation.** Pay 25.00 USD (the form is filled). Open the certificate link and the thank-you in the outbox.
 7. **Pay speaker fee** on Ken Lin, then **Confirm**.
-8. **Publish plan to PayPal**, then **Start subscription**. In mock mode the member becomes active immediately. In the sandbox, use the approve link.
-9. **Build report**, then **Download CSV**. The notice explains the local ledger fallback.
+8. **Publish plan to PayPal**, then **Start subscription**. In mock mode the member becomes active immediately. In the sandbox, open the subscription `approveUrl` while logged in as a sandbox personal buyer from **Dashboard → Sandbox → Accounts**. That link looks like `https://www.sandbox.paypal.com/webapps/billing/subscriptions?ba_token=BA-...`.
+9. **Build report**, then **Download CSV**. The notice explains the local ledger fallback. If Transaction Search returns `403 NOT_AUTHORIZED`, enable the **Transaction search** checkbox on the sandbox app. The CSV still contains the local ledger.
 10. **Right.** Ask `Who has not paid?` Confirm a refund the agent proposes (`Refund Priya Shah`) and watch the roster change. Ask `Build the reimbursement report`.
 11. Press **Simulate capture webhook** to mark the next unpaid attendee paid through `POST /api/paypal/webhook`.
 
-With sandbox keys, repeat steps 3 and 6 with the JavaScript SDK buttons and a sandbox personal account. Step 7 calls Payouts. Step 5 calls Invoicing. Step 9 calls Transaction Search and still shows the local ledger if search is empty.
+With sandbox keys, checkout does not require the JavaScript SDK. `POST /api/checkout/orders` returns `approveUrl` (`https://www.sandbox.paypal.com/checkoutnow?token=<ORDER_ID>`), and the roster shows **Open PayPal approval**. Log in as the sandbox personal buyer from **Dashboard → Sandbox → Accounts**, approve, then press **Capture approved payment**. A live PayPal account cannot approve that URL. Capture and refund both wait on that buyer approval. Invoicing needs `PAYPAL_MERCHANT_EMAIL` and the app’s **Invoicing** checkbox. Payout item status can be `UNCLAIMED` or `FAILED` even when the batch says `SUCCESS`; the roster and the agent stay unpaid until the item is `SUCCESS`.
 
 Reset the seeded roster with **Reset money demo**.
 
@@ -169,7 +179,7 @@ See [.env.example](.env.example). Never commit `.env`.
 | Variable | Role |
 | --- | --- |
 | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | Sandbox REST app. The client id is public in the browser SDK. The secret stays on the server |
-| `PAYPAL_MERCHANT_EMAIL` | Sandbox business email for invoices |
+| `PAYPAL_MERCHANT_EMAIL` | Required for Invoicing. Sandbox business email that owns the REST app. No default |
 | `PAYPAL_SPEAKER_EMAIL` | Sandbox personal email for the speaker payout |
 | `PAYPAL_WEBHOOK_ID` | Optional signature verification |
 | `MOCK_PAYPAL` | `1` forces simulation. Unset with keys uses the sandbox. `0` with no keys disables money buttons |
@@ -187,7 +197,7 @@ This hackathon pass adds the money desk on top of the October copy generator. Th
 - Webhook handler that marks the roster paid or refunded and writes a receipt
 - Invoicing v2 create and send, with confirm before send
 - Donation capture, thank-you email, and PDF certificate
-- Payouts API for the speaker fee, as a custom agent tool
+- Payouts API for the speaker fee. The roster uses the payout **item** status (`SUCCESS`, `UNCLAIMED`, `FAILED`, `PENDING`), not the batch status alone
 - Subscriptions API (product, plan, subscription approve link)
 - One-click refund that updates the roster
 - Transaction Search with a local ledger fallback and CSV reimbursement report
@@ -201,7 +211,8 @@ This hackathon pass adds the money desk on top of the October copy generator. Th
 - Sandbox only. There is no live PayPal environment in this repo.
 - Without credentials the desk simulates every PayPal call. The banner says so. `npm run check:mock` covers that path. This environment did not have sandbox keys, so the live sandbox buttons were not executed here.
 - Transaction Search in the sandbox can be empty for hours. The CSV still contains the local ledger.
-- Payouts and invoices fail until the sandbox business is allowed to use those products and the emails match sandbox accounts. The API error is shown in the desk.
+- Payout item status `UNCLAIMED` / `RECEIVER_UNREGISTERED` means `PAYPAL_SPEAKER_EMAIL` is not a sandbox personal account. The speaker is not marked paid until the item status is `SUCCESS`.
+- Invoicing requires `PAYPAL_MERCHANT_EMAIL`. A `403 NOT_AUTHORIZED` on Invoicing or Transaction Search means that checkbox is off on the sandbox app. The reimbursement report still uses the local ledger.
 - Seeded Mia, Priya, and Sofia captures are not real PayPal captures.
 - Marketplace NT$ prices are still a quote. They do not charge a card.
 - Channel copy is a template, not a model. The model is only the officer agent.

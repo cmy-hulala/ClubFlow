@@ -43,7 +43,7 @@ export const config = {
   clientId,
   clientSecret,
   webhookId: flag("PAYPAL_WEBHOOK_ID"),
-  merchantEmail: flag("PAYPAL_MERCHANT_EMAIL") || "sb-merchant@business.example.com",
+  merchantEmail: flag("PAYPAL_MERCHANT_EMAIL"),
   speakerEmail: flag("PAYPAL_SPEAKER_EMAIL") || "speaker-ken-lin@personal.example.com",
   openaiKey: flag("OPENAI_API_KEY"),
   openaiModel: flag("OPENAI_MODEL") || "gpt-4o-mini",
@@ -59,6 +59,15 @@ export const config = {
   corsOrigin: flag("CORS_ORIGIN"),
   paypalBase: "https://api-m.sandbox.paypal.com",
 };
+
+export function requireMerchantEmail(): string {
+  if (!config.merchantEmail) {
+    throw new Error(
+      "PAYPAL_MERCHANT_EMAIL is required for Invoicing. Set it to the sandbox business account email that owns this REST app (Developer Dashboard → Sandbox → Accounts), then restart. PayPal rejects an invoice whose invoicer email is not that account.",
+    );
+  }
+  return config.merchantEmail;
+}
 
 export function publicBase(req?: { protocol: string; get(name: string): string | undefined }): string {
   const fromEnv = flag("PUBLIC_BASE_URL").replace(/\/$/, "");
